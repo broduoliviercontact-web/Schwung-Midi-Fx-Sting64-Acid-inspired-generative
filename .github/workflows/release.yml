@@ -1,0 +1,92 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read module metadata
+        id: meta
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          with open("src/module.json", "r", encoding="utf-8") as f:
+              data = json.load(f)
+          print(f"module_id={data['id']}")
+          print(f"version={data['version']}")
+          print(f"asset=dist/{data['id']}-module.tar.gz")
+          print(f"asset_name={data['id']}-module.tar.gz")
+          PY
+
+      - name: Validate tag matches module version
+        run: |
+          test "v${{ steps.meta.outputs.version }}" = "${GITHUB_REF_NAME}"
+
+      - name: Run native tests
+        run: make test
+
+      - name: Package release asset
+        run: ./scripts/package.sh auto
+
+      - name: Verify tarball structure
+        run: |
+          tar -tzf "${{ steps.meta.outputs.asset }}" | grep -Fx "${{ steps.meta.outputs.module_id }}/"
+          tar -tzf "${{ steps.meta.outputs.asset }}" | grep -Fx "${{ steps.meta.outputs.module_id }}/module.json"
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "v${{ steps.meta.outputs.version }}"
+          name: "v${{ steps.meta.outputs.version }}"
+          files: "${{ steps.meta.outputs.asset }}"
+          generate_release_notes: true
+
+      - name: Update release.json on main
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          MODULE_ID: ${{ steps.meta.outputs.module_id }}
+        run: |
+          git fetch origin main
+          git checkout main
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          data = {
+              "version": os.environ["VERSION"],
+              "download_url": (
+                  f"https://github.com/{os.environ['GITHUB_REPOSITORY']}"
+                  f"/releases/download/v{os.environ['VERSION']}/{os.environ['MODULE_ID']}-module.tar.gz"
+              ),
+          }
+
+          Path("release.json").write_text(
+              json.dumps(data, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+          if git diff --quiet -- release.json; then
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add release.json
+          git commit -m "Update release.json for v${VERSION}"
+          git push origin HEAD:main

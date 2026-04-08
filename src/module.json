@@ -1,0 +1,158 @@
+{
+  "id": "sting64",
+  "name": "Sting64",
+  "abbrev": "S64",
+  "version": "0.1.0",
+  "description": "Probabilistic step sequencer with musical thinning, swing, pitch chaos, and scale locking.",
+  "author": "Schwung",
+  "license": "MIT",
+  "dsp": "dsp.so",
+  "api_version": 1,
+  "capabilities": {
+    "audio_out": false,
+    "audio_in": false,
+    "midi_in": true,
+    "midi_out": true,
+    "chainable": true,
+    "component_type": "midi_fx",
+    "ui_hierarchy": {
+      "levels": {
+        "root": {
+          "name": "Sting64",
+          "knobs": ["root", "scale", "density", "chaos", "swing", "rate", "gate", "steps"],
+          "params": ["root", "scale", "density", "chaos", "swing", "seed", "regen", "rate", "gate", "bpm", "sync", "steps", "velocity"]
+        }
+      }
+    }
+  },
+  "chain_params": [
+    {
+      "key": "root",
+      "name": "Root",
+      "type": "int",
+      "min": -24,
+      "max": 24,
+      "default": 0,
+      "step": 1
+    },
+    {
+      "key": "scale",
+      "name": "Scale",
+      "type": "enum",
+      "options": [
+        "ionian",
+        "aeolian",
+        "dorian",
+        "mixolydian",
+        "phrygian",
+        "lydian",
+        "locrian",
+        "major_pent",
+        "minor_pent",
+        "major_blues",
+        "minor_blues",
+        "harmonic_minor",
+        "melodic_minor",
+        "phrygian_dominant",
+        "double_harmonic",
+        "whole_tone",
+        "diminished_wh",
+        "diminished_hw",
+        "chromatic"
+      ],
+      "default": "ionian"
+    },
+    {
+      "key": "density",
+      "name": "Density",
+      "type": "float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.75,
+      "step": 0.01
+    },
+    {
+      "key": "chaos",
+      "name": "Chaos",
+      "type": "float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.25,
+      "step": 0.01
+    },
+    {
+      "key": "swing",
+      "name": "Swing",
+      "type": "float",
+      "min": 0.0,
+      "max": 0.5,
+      "default": 0.0,
+      "step": 0.01
+    },
+    {
+      "key": "seed",
+      "name": "Seed",
+      "type": "int",
+      "min": 0,
+      "max": 65535,
+      "default": 1,
+      "step": 1
+    },
+    {
+      "key": "regen",
+      "name": "New Seed",
+      "type": "toggle",
+      "default": false
+    },
+    {
+      "key": "rate",
+      "name": "Rate",
+      "type": "enum",
+      "options": ["1/4D", "1/4", "1/4T", "1/8D", "1/8", "1/8T", "1/16D", "1/16", "1/16T", "1/32", "1/32T"],
+      "default": "1/16"
+    },
+    {
+      "key": "gate",
+      "name": "Gate",
+      "type": "float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "step": 0.01
+    },
+    {
+      "key": "bpm",
+      "name": "BPM",
+      "type": "int",
+      "min": 20,
+      "max": 300,
+      "default": 120,
+      "step": 1
+    },
+    {
+      "key": "sync",
+      "name": "Sync",
+      "type": "enum",
+      "options": ["internal", "move"],
+      "default": "internal"
+    },
+    {
+      "key": "steps",
+      "name": "Steps",
+      "type": "int",
+      "min": 1,
+      "max": 64,
+      "default": 16,
+      "step": 1
+    },
+    {
+      "key": "velocity",
+      "name": "Velocity",
+      "type": "float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.75,
+      "step": 0.01
+    }
+  ]
+}
