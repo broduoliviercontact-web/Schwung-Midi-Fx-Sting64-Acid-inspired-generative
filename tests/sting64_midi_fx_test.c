@@ -86,7 +86,7 @@ static void test_get_param_returns_snprintf(void)
 
     char buf[64];
     static const char *keys[] = {
-        "density", "chaos", "swing", "gate", "seed", "regen", "rate", "sync", "steps", "scale", "root", "velocity", "bpm", NULL
+        "density", "chaos", "swing", "gate", "seed", "rate", "sync", "steps", "scale", "root", "velocity", "bpm", NULL
     };
     for (int i = 0; keys[i]; i++) {
         int r = api->get_param(inst, keys[i], buf, sizeof(buf));
@@ -197,7 +197,7 @@ static void test_set_get_sync(void)
     char buf[64];
 
     api->get_param(inst, "sync", buf, sizeof(buf));
-    CHECK_EQ_STR(buf, "internal");
+    CHECK_EQ_STR(buf, "move");
 
     api->set_param(inst, "sync", "move");
     api->get_param(inst, "sync", buf, sizeof(buf));
@@ -242,9 +242,17 @@ static void test_set_get_rate(void)
     api->get_param(inst, "rate", buf, sizeof(buf));
     CHECK_EQ_STR(buf, "1/16D");
 
+    api->set_param(inst, "rate", "1/32D");
+    api->get_param(inst, "rate", buf, sizeof(buf));
+    CHECK_EQ_STR(buf, "1/32D");
+
+    api->set_param(inst, "rate", "1/64");
+    api->get_param(inst, "rate", buf, sizeof(buf));
+    CHECK_EQ_STR(buf, "1/64");
+
     api->set_param(inst, "rate", "1.0000");
     api->get_param(inst, "rate", buf, sizeof(buf));
-    CHECK_EQ_STR(buf, "1/32T");
+    CHECK_EQ_STR(buf, "1/64T");
 
     api->set_param(inst, "rate", "0");
     api->get_param(inst, "rate", buf, sizeof(buf));
@@ -253,12 +261,10 @@ static void test_set_get_rate(void)
     api->destroy_instance(inst);
 }
 
-static void test_set_get_seed_and_regen(void)
+static void test_set_get_seed(void)
 {
     void *inst = api->create_instance(NULL, NULL);
     char buf[64];
-    unsigned before;
-    unsigned after;
 
     api->get_param(inst, "seed", buf, sizeof(buf));
     CHECK((unsigned)atoi(buf) == 1u);
@@ -270,23 +276,6 @@ static void test_set_get_seed_and_regen(void)
     api->set_param(inst, "seed", "1.0000");
     api->get_param(inst, "seed", buf, sizeof(buf));
     CHECK((unsigned)atoi(buf) == 65535u);
-
-    api->get_param(inst, "regen", buf, sizeof(buf));
-    CHECK_EQ_STR(buf, "false");
-
-    api->set_param(inst, "seed", "42");
-    api->get_param(inst, "seed", buf, sizeof(buf));
-    before = (unsigned)atoi(buf);
-    api->set_param(inst, "regen", "true");
-    api->get_param(inst, "seed", buf, sizeof(buf));
-    after = (unsigned)atoi(buf);
-    CHECK(after != before);
-
-    before = after;
-    api->set_param(inst, "regen", "1.0000");
-    api->get_param(inst, "seed", buf, sizeof(buf));
-    after = (unsigned)atoi(buf);
-    CHECK(after != before);
 
     api->destroy_instance(inst);
 }
@@ -386,7 +375,7 @@ static void test_set_get_root(void)
     char buf[64];
 
     api->get_param(inst, "density", buf, sizeof(buf));
-    CHECK_NEAR(atof(buf), 0.75, 0.02);
+    CHECK_NEAR(atof(buf), 0.90, 0.02);
 
     /* positive */
     api->set_param(inst, "root", "12");
@@ -611,6 +600,7 @@ static void test_rate_changes_internal_timing(void)
     uint8_t out[MIDI_FX_MAX_OUT_MSGS][3];
     int lens[MIDI_FX_MAX_OUT_MSGS];
 
+    api->set_param(inst, "sync", "internal");
     api->set_param(inst, "density", "1.0000");
     api->set_param(inst, "steps", "4");
     api->set_param(inst, "rate", "1/4D");
@@ -618,6 +608,47 @@ static void test_rate_changes_internal_timing(void)
 
     api->set_param(inst, "rate", "1/32T");
     CHECK(api->tick(inst, 6000, 44100, out, lens, MIDI_FX_MAX_OUT_MSGS) > 0);
+
+    api->set_param(inst, "rate", "1/64T");
+    CHECK(api->tick(inst, 2000, 44100, out, lens, MIDI_FX_MAX_OUT_MSGS) > 0);
+
+    api->destroy_instance(inst);
+}
+
+static void test_fractional_move_rates_work(void)
+{
+    void *inst = api->create_instance(NULL, NULL);
+    uint8_t out[MIDI_FX_MAX_OUT_MSGS][3];
+    int lens[MIDI_FX_MAX_OUT_MSGS];
+    uint8_t start[1] = { 0xFA };
+    uint8_t clock[1] = { 0xF8 };
+    int note_ons = 0;
+
+    api->set_param(inst, "sync", "move");
+    api->set_param(inst, "density", "1.0000");
+    api->set_param(inst, "gate", "1.0000");
+
+    api->set_param(inst, "rate", "1/32D");
+    CHECK(api->process_midi(inst, start, 1, out, lens, MIDI_FX_MAX_OUT_MSGS) > 0);
+    for (int i = 0; i < 4; i++) {
+        int n = api->process_midi(inst, clock, 1, out, lens, MIDI_FX_MAX_OUT_MSGS);
+        for (int j = 0; j < n; j++)
+            if ((out[j][0] & 0xF0) == 0x90)
+                note_ons++;
+    }
+    CHECK(note_ons == 0);
+    CHECK(api->process_midi(inst, clock, 1, out, lens, MIDI_FX_MAX_OUT_MSGS) > 0);
+
+    api->set_param(inst, "rate", "1/64");
+    CHECK(api->process_midi(inst, start, 1, out, lens, MIDI_FX_MAX_OUT_MSGS) > 0);
+    note_ons = 0;
+    for (int i = 0; i < 3; i++) {
+        int n = api->process_midi(inst, clock, 1, out, lens, MIDI_FX_MAX_OUT_MSGS);
+        for (int j = 0; j < n; j++)
+            if ((out[j][0] & 0xF0) == 0x90)
+                note_ons++;
+    }
+    CHECK(note_ons >= 2);
 
     api->destroy_instance(inst);
 }
@@ -629,6 +660,7 @@ static void test_gate_changes_internal_note_length(void)
     void *inst;
 
     inst = api->create_instance(NULL, NULL);
+    api->set_param(inst, "sync", "internal");
     api->set_param(inst, "density", "1.0000");
     api->set_param(inst, "steps", "4");
     api->set_param(inst, "rate", "1/8");
@@ -638,6 +670,7 @@ static void test_gate_changes_internal_note_length(void)
     api->destroy_instance(inst);
 
     inst = api->create_instance(NULL, NULL);
+    api->set_param(inst, "sync", "internal");
     api->set_param(inst, "density", "1.0000");
     api->set_param(inst, "steps", "4");
     api->set_param(inst, "rate", "1/8");
@@ -665,6 +698,8 @@ static void test_gate_changes_move_clock_note_length(void)
     n = api->process_midi(inst, start, 1, out, lens, MIDI_FX_MAX_OUT_MSGS);
     CHECK(n > 0);
     n = api->process_midi(inst, clock, 1, out, lens, MIDI_FX_MAX_OUT_MSGS);
+    CHECK(n == 0);
+    n = api->process_midi(inst, clock, 1, out, lens, MIDI_FX_MAX_OUT_MSGS);
     CHECK(n > 0);
     CHECK((out[0][0] & 0xF0) == 0x80);
 
@@ -687,6 +722,7 @@ static void test_seed_changes_generated_loop(void)
     int first_note = -1;
     int second_note = -1;
 
+    api->set_param(inst, "sync", "internal");
     api->set_param(inst, "density", "1.0000");
     api->set_param(inst, "chaos", "1.0000");
     api->set_param(inst, "steps", "8");
@@ -854,7 +890,7 @@ static void test_load_partial_state(void)
 
     /* Other params should still be at their defaults */
     api->get_param(inst, "sync", buf, sizeof(buf));
-    CHECK_EQ_STR(buf, "internal");
+    CHECK_EQ_STR(buf, "move");
 
     api->get_param(inst, "steps", buf, sizeof(buf));
     CHECK(atoi(buf) == 16);
@@ -908,7 +944,7 @@ int main(void)
     test_set_get_chaos();
     test_set_get_swing();
     test_set_get_gate();
-    test_set_get_seed_and_regen();
+    test_set_get_seed();
     test_set_get_rate();
     test_set_get_sync();
     test_set_get_steps();
@@ -923,6 +959,7 @@ int main(void)
     test_move_sync_waits_for_midi_clock();
     test_move_sync_processes_transport_and_clock();
     test_rate_changes_internal_timing();
+    test_fractional_move_rates_work();
     test_gate_changes_internal_note_length();
     test_gate_changes_move_clock_note_length();
     test_seed_changes_generated_loop();

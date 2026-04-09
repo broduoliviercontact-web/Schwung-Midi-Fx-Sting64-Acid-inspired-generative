@@ -63,17 +63,17 @@ static void test_init_defaults(void)
     sting64_engine_init(&e);
 
     CHECK_EQ(e.steps_count, 16);
-    CHECK_EQ(e.scale_index, STING64_SCALE_IONIAN);
+    CHECK_EQ(e.scale_index, STING64_SCALE_MINOR_PENT);
     CHECK_EQ(e.root,        0);
     CHECK_EQ(e.swing,       0);
     CHECK_EQ(e.seed,        1);
     CHECK_EQ(e.step_pos,    0);
 
-    /* density default ~0.75: 192/255 ≈ 0.753 */
-    CHECK(e.density > 185 && e.density < 200);
+    /* density default ~0.90: 230/255 ≈ 0.902 */
+    CHECK(e.density > 225 && e.density < 235);
 
-    /* chaos default ~0.25: 64/255 ≈ 0.251 */
-    CHECK(e.chaos > 60 && e.chaos < 70);
+    /* chaos default 0.0 */
+    CHECK(e.chaos == 0);
 
     /* velocity default ~0.75: 96/127 ≈ 0.756 */
     CHECK(e.velocity > 90 && e.velocity < 100);
@@ -154,6 +154,22 @@ static void test_density_protects_downbeats(void)
 
     CHECK(downbeats > 0);
     CHECK(downbeats >= weaks / 2);
+}
+
+static void test_density_keeps_first_step_when_nonzero(void)
+{
+    StingEngine e;
+
+    sting64_engine_init(&e);
+    e.steps_count = 16;
+    e.density = 8; /* extremely sparse, but not zero */
+    e.seed = 1234;
+    sting64_engine_invalidate_sequence(&e);
+
+    for (int i = 0; i < 32; i++) {
+        e.step_pos = 0;
+        CHECK_EQ(sting64_engine_should_play_step(&e), 1);
+    }
 }
 
 static void test_pick_note_zero_chaos(void)
@@ -247,6 +263,40 @@ static void test_seed_changes_loop_content(void)
     }
 
     CHECK(differs);
+}
+
+static void test_strong_steps_are_more_harmonically_stable(void)
+{
+    int strong_total = 0;
+    int weak_total = 0;
+
+    for (uint32_t seed = 1; seed <= 128; seed++) {
+        StingEngine e;
+        int strong_dist;
+        int weak_dist;
+
+        sting64_engine_init(&e);
+        e.steps_count = 16;
+        e.density = 255;
+        e.chaos = 255;
+        e.root = 0;
+        e.scale_index = STING64_SCALE_CHROMATIC;
+        e.seed = seed;
+        sting64_engine_invalidate_sequence(&e);
+
+        e.step_pos = 0;
+        strong_dist = sting64_engine_pick_note(&e) - 60;
+        if (strong_dist < 0) strong_dist = -strong_dist;
+
+        e.step_pos = 1;
+        weak_dist = sting64_engine_pick_note(&e) - 60;
+        if (weak_dist < 0) weak_dist = -weak_dist;
+
+        strong_total += strong_dist;
+        weak_total += weak_dist;
+    }
+
+    CHECK(strong_total < weak_total);
 }
 
 static void test_pick_note_always_in_scale(void)
@@ -448,9 +498,11 @@ int main(void)
     test_density_zero_always_rests();
     test_density_full_always_plays();
     test_density_protects_downbeats();
+    test_density_keeps_first_step_when_nonzero();
     test_pick_note_zero_chaos();
     test_steps_define_loop_length();
     test_seed_changes_loop_content();
+    test_strong_steps_are_more_harmonically_stable();
     test_pick_note_always_in_scale();
     test_scale_intervals_differ();
     test_root_transposition();

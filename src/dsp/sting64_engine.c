@@ -38,11 +38,19 @@ static const int SCALE_LENS[STING64_SCALE_COUNT] = {
     7, 7, 7, 7, 7, 7, 7, 5, 5, 6, 6, 7, 7, 7, 7, 6, 8, 8, 12
 };
 
-/* Position-aware drop priorities inspired by Subsequence's "strength" thinning.
- * e/a subdivisions drop first, then &, while downbeats are strongly protected. */
-#define STING64_DROP_PRIO_DOWNBEAT  13   /* ~0.05 * 255 */
-#define STING64_DROP_PRIO_UPBEAT   153   /* ~0.60 * 255 */
-#define STING64_DROP_PRIO_WEAK     255   /* 1.00 * 255 */
+/* Position-aware step hierarchy.
+ * The first bar hit is the strongest anchor, then other quarter-note downbeats,
+ * then upbeats, then weak subdivisions. This hierarchy drives both density and
+ * pitch stability so high chaos still produces phrases with a clear center. */
+#define STING64_STEP_STRENGTH_BAR       3
+#define STING64_STEP_STRENGTH_DOWNBEAT  2
+#define STING64_STEP_STRENGTH_UPBEAT    1
+#define STING64_STEP_STRENGTH_WEAK      0
+
+#define STING64_DROP_PRIO_BAR        0    /* never drop step 0 when density > 0 */
+#define STING64_DROP_PRIO_DOWNBEAT   38   /* strongly protected quarter notes */
+#define STING64_DROP_PRIO_UPBEAT     153  /* moderately protected */
+#define STING64_DROP_PRIO_WEAK       255  /* weak subdivisions drop first */
 
 /* ------------------------------------------------------------------ */
 /* Private: LCG random number generator                                */
@@ -104,7 +112,7 @@ static int quantize_to_scale(int raw, uint8_t scale_idx)
     return best;
 }
 
-static uint8_t step_drop_priority_at(int steps, int step_pos)
+static uint8_t step_strength_at(int steps, int step_pos)
 {
     int steps_per_beat = steps / 4;
     int pos_in_beat;
@@ -115,15 +123,70 @@ static uint8_t step_drop_priority_at(int steps, int step_pos)
     if (step_pos < 0)
         step_pos = 0;
 
+    if (step_pos == 0)
+        return STING64_STEP_STRENGTH_BAR;
+
     pos_in_beat = step_pos % steps_per_beat;
 
     if (pos_in_beat == 0)
-        return STING64_DROP_PRIO_DOWNBEAT;
+        return STING64_STEP_STRENGTH_DOWNBEAT;
 
     if (steps_per_beat > 1 && pos_in_beat == steps_per_beat / 2)
-        return STING64_DROP_PRIO_UPBEAT;
+        return STING64_STEP_STRENGTH_UPBEAT;
 
-    return STING64_DROP_PRIO_WEAK;
+    return STING64_STEP_STRENGTH_WEAK;
+}
+
+static uint8_t step_drop_priority_at(int steps, int step_pos)
+{
+    switch (step_strength_at(steps, step_pos)) {
+    case STING64_STEP_STRENGTH_BAR:
+        return STING64_DROP_PRIO_BAR;
+    case STING64_STEP_STRENGTH_DOWNBEAT:
+        return STING64_DROP_PRIO_DOWNBEAT;
+    case STING64_STEP_STRENGTH_UPBEAT:
+        return STING64_DROP_PRIO_UPBEAT;
+    default:
+        return STING64_DROP_PRIO_WEAK;
+    }
+}
+
+static int chaos_spread_for_step(uint8_t chaos, uint8_t strength)
+{
+    int base_spread = (int)((chaos / 255.0f) * 24.0f + 0.5f);
+
+    switch (strength) {
+    case STING64_STEP_STRENGTH_BAR:
+        return (base_spread + 3) / 4;
+    case STING64_STEP_STRENGTH_DOWNBEAT:
+        return (base_spread + 1) / 2;
+    case STING64_STEP_STRENGTH_UPBEAT:
+        return (base_spread * 3 + 3) / 4;
+    default:
+        return base_spread;
+    }
+}
+
+static int anchor_offset_for_step(uint32_t *rng, uint8_t strength, int base_spread)
+{
+    if (base_spread < 2)
+        return 0;
+
+    switch (strength) {
+    case STING64_STEP_STRENGTH_BAR:
+        return (lcg_next(rng) & 1u) ? 0 : 12;
+    case STING64_STEP_STRENGTH_DOWNBEAT:
+        switch (lcg_next(rng) % 3u) {
+        case 0:
+            return 0;
+        case 1:
+            return 7;
+        default:
+            return 12;
+        }
+    default:
+        return 0;
+    }
 }
 
 static uint32_t sequence_seed(const StingEngine *e)
@@ -152,14 +215,18 @@ static void rebuild_sequence(StingEngine *e)
     }
 
     for (int i = 0; i < steps; i++) {
+        uint8_t strength;
         uint8_t priority;
         uint32_t drop_threshold;
         uint32_t random_byte;
         int spread;
+        int base_spread;
+        int anchor;
         int offset = 0;
         int raw;
         int note;
 
+        strength = step_strength_at(steps, i);
         priority = step_drop_priority_at(steps, i);
 
         if (e->density == 0) {
@@ -178,13 +245,15 @@ static void rebuild_sequence(StingEngine *e)
         if (!e->step_gate[i])
             continue;
 
-        spread = (int)((e->chaos / 255.0f) * 24.0f + 0.5f);
+        base_spread = (int)((e->chaos / 255.0f) * 24.0f + 0.5f);
+        spread = chaos_spread_for_step(e->chaos, strength);
+        anchor = anchor_offset_for_step(&rng, strength, base_spread);
         if (spread > 0) {
             uint32_t r = lcg_next(&rng);
             offset = (int)(r % (uint32_t)(2 * spread + 1)) - spread;
         }
 
-        raw = 60 + (int)e->root + offset;
+        raw = 60 + (int)e->root + anchor + offset;
         note = quantize_to_scale(raw, e->scale_index);
         e->step_note[i] = (uint8_t)note;
     }
@@ -202,10 +271,10 @@ static void rebuild_sequence(StingEngine *e)
 void sting64_engine_init(StingEngine *e)
 {
     e->steps_count = 16;
-    e->density     = 192;   /* ~0.75 normalized */
-    e->chaos       = 64;    /* ~0.25 normalized */
+    e->density     = 230;   /* ~0.90 normalized — matches module.json default */
+    e->chaos       = 0;     /* 0.0 normalized — matches module.json default */
     e->swing       = 0;
-    e->scale_index = STING64_SCALE_IONIAN;
+    e->scale_index = STING64_SCALE_MINOR_PENT; /* matches module.json default */
     e->root        = 0;
     e->velocity    = 96;    /* ~0.75 normalized (96/127) */
     e->seed        = 1;

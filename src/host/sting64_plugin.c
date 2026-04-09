@@ -32,8 +32,14 @@
 #define STING64_RATE_SIXTEENTH_D    6
 #define STING64_RATE_SIXTEENTH      7
 #define STING64_RATE_SIXTEENTH_T    8
-#define STING64_RATE_THIRTYSECOND   9
-#define STING64_RATE_THIRTYSECOND_T 10
+#define STING64_RATE_THIRTYSECOND_D 9
+#define STING64_RATE_THIRTYSECOND   10
+#define STING64_RATE_THIRTYSECOND_T 11
+#define STING64_RATE_SIXTYFOURTH_D  12
+#define STING64_RATE_SIXTYFOURTH    13
+#define STING64_RATE_SIXTYFOURTH_T  14
+
+#define STING64_MIDI_CLOCK_SUBDIV   4
 
 static const host_api_v1_t *g_host = NULL;
 
@@ -46,7 +52,7 @@ typedef struct {
 
     /* timing */
     uint16_t bpm;                /* user-set BPM 20–300, default 120 */
-    uint8_t  rate;               /* quarter/eighth/sixteenth/thirty-second */
+    uint8_t  rate;               /* quarter to sixty-fourth, incl dotted/triplet */
     uint8_t  gate;               /* gate ratio 0–255, default ~0.5 */
     uint8_t  sync_mode;          /* internal BPM or Move MIDI clock */
     uint8_t  running;            /* tick-time running state */
@@ -54,18 +60,18 @@ typedef struct {
     int      last_sample_rate;   /* detect sample rate changes */
     uint32_t frames_per_step;    /* recomputed from bpm + sample_rate */
     uint32_t frames_accum;       /* straight-time frame accumulator */
-    uint8_t  clock_counter;      /* external clock ticks within current step */
-    uint8_t  clocks_per_step;    /* MIDI clocks per step (fixed 16th grid) */
+    uint16_t clock_phase_subclocks; /* external MIDI clock phase in 1/4-clock units */
+    uint16_t step_subclocks;        /* step length in 1/4-clock units */
 
     /* swing */
     uint8_t  swing_pending;
     uint32_t swing_frames_left;
-    uint8_t  swing_clock_ticks_left;
+    uint16_t swing_subclocks_left;
     uint8_t  pending_note;
 
     /* gate */
     uint32_t note_off_frames;
-    uint8_t  note_off_clock_ticks;
+    uint16_t note_off_subclocks;
     uint8_t  note_off_pending;
 
     /* active note */
@@ -91,7 +97,7 @@ static int flush_active_note(Sting64Instance *inst,
         inst->active_note      = 255;
         inst->note_off_pending = 0;
         inst->note_off_frames  = 0;
-        inst->note_off_clock_ticks = 0;
+        inst->note_off_subclocks = 0;
     }
     return count;
 }
@@ -117,42 +123,58 @@ static float rate_notes_per_beat(uint8_t rate)
         return 4.0f;
     case STING64_RATE_SIXTEENTH_T:
         return 6.0f;
+    case STING64_RATE_THIRTYSECOND_D:
+        return 16.0f / 3.0f;
     case STING64_RATE_THIRTYSECOND:
         return 8.0f;
     case STING64_RATE_THIRTYSECOND_T:
         return 12.0f;
+    case STING64_RATE_SIXTYFOURTH_D:
+        return 32.0f / 3.0f;
+    case STING64_RATE_SIXTYFOURTH:
+        return 16.0f;
+    case STING64_RATE_SIXTYFOURTH_T:
+        return 24.0f;
     default:
         return 4.0f;
     }
 }
 
-static uint8_t clocks_per_step_for_rate(uint8_t rate)
+static uint16_t step_subclocks_for_rate(uint8_t rate)
 {
     switch (rate) {
     case STING64_RATE_QUARTER_D:
-        return 36;
+        return 144;
     case STING64_RATE_QUARTER:
-        return 24;
+        return 96;
     case STING64_RATE_QUARTER_T:
-        return 16;
+        return 64;
     case STING64_RATE_EIGHTH_D:
-        return 18;
+        return 72;
     case STING64_RATE_EIGHTH:
-        return 12;
+        return 48;
     case STING64_RATE_EIGHTH_T:
-        return 8;
+        return 32;
     case STING64_RATE_SIXTEENTH_D:
-        return 9;
+        return 36;
     case STING64_RATE_SIXTEENTH:
-        return 6;
+        return 24;
     case STING64_RATE_SIXTEENTH_T:
-        return 4;
+        return 16;
+    case STING64_RATE_THIRTYSECOND_D:
+        return 18;
     case STING64_RATE_THIRTYSECOND:
-        return 3;
+        return 12;
     case STING64_RATE_THIRTYSECOND_T:
-        return 2;
-    default:
+        return 8;
+    case STING64_RATE_SIXTYFOURTH_D:
+        return 9;
+    case STING64_RATE_SIXTYFOURTH:
         return 6;
+    case STING64_RATE_SIXTYFOURTH_T:
+        return 4;
+    default:
+        return 24;
     }
 }
 
@@ -164,7 +186,7 @@ static void recompute_timing(Sting64Instance *inst, int sample_rate, float bpm)
     float steps_per_second = (bpm / 60.0f) * rate_notes_per_beat(inst->rate);
     inst->frames_per_step  = (uint32_t)(sample_rate / steps_per_second + 0.5f);
     if (inst->frames_per_step < 1) inst->frames_per_step = 1;
-    inst->clocks_per_step  = clocks_per_step_for_rate(inst->rate);
+    inst->step_subclocks   = step_subclocks_for_rate(inst->rate);
     inst->last_sample_rate = sample_rate;
 }
 
@@ -189,12 +211,12 @@ static uint32_t swing_offset_frames(const Sting64Instance *inst)
     return (uint32_t)(inst->frames_per_step * ratio * 0.5f + 0.5f);
 }
 
-static uint8_t swing_offset_clocks(const Sting64Instance *inst)
+static uint16_t swing_offset_subclocks(const Sting64Instance *inst)
 {
     float ratio = inst->engine.swing / 255.0f;
-    uint8_t delay = (uint8_t)(inst->clocks_per_step * ratio * 0.5f + 0.5f);
-    if (delay >= inst->clocks_per_step)
-        delay = (uint8_t)(inst->clocks_per_step - 1);
+    uint16_t delay = (uint16_t)(inst->step_subclocks * ratio * 0.5f + 0.5f);
+    if (delay >= inst->step_subclocks)
+        delay = (uint16_t)(inst->step_subclocks - 1);
     return delay;
 }
 
@@ -222,15 +244,15 @@ static int emit_note_on(Sting64Instance *inst, uint8_t note,
     inst->note_off_pending = 1;
     /* gate: 0.0..1.0 of the step duration */
     if (inst->sync_mode == STING64_SYNC_MOVE) {
-        inst->note_off_clock_ticks =
-            (uint8_t)(((uint32_t)inst->clocks_per_step * inst->gate + 127u) / 255u);
-        if (inst->note_off_clock_ticks < 1) inst->note_off_clock_ticks = 1;
+        inst->note_off_subclocks =
+            (uint16_t)(((uint32_t)inst->step_subclocks * inst->gate + 127u) / 255u);
+        if (inst->note_off_subclocks < 1) inst->note_off_subclocks = 1;
         inst->note_off_frames = 0;
     } else {
         inst->note_off_frames =
             (uint32_t)(((uint64_t)inst->frames_per_step * inst->gate + 127u) / 255u);
         if (inst->note_off_frames < 1) inst->note_off_frames = 1;
-        inst->note_off_clock_ticks = 0;
+        inst->note_off_subclocks = 0;
     }
 
     return count;
@@ -244,13 +266,13 @@ static void reset_transport_phase(Sting64Instance *inst, int reset_step)
         inst->engine.step_pos = 0;
 
     inst->frames_accum = 0;
-    inst->clock_counter = 0;
+    inst->clock_phase_subclocks = 0;
     inst->swing_pending = 0;
     inst->swing_frames_left = 0;
-    inst->swing_clock_ticks_left = 0;
+    inst->swing_subclocks_left = 0;
     inst->note_off_pending = 0;
     inst->note_off_frames = 0;
-    inst->note_off_clock_ticks = 0;
+    inst->note_off_subclocks = 0;
 }
 
 static int run_step_boundary(Sting64Instance *inst, int clock_mode,
@@ -264,11 +286,11 @@ static int run_step_boundary(Sting64Instance *inst, int clock_mode,
         uint8_t note = sting64_engine_pick_note(&inst->engine);
 
         if (clock_mode) {
-            uint8_t delay = swung ? swing_offset_clocks(inst) : 0;
+            uint16_t delay = swung ? swing_offset_subclocks(inst) : 0;
             if (delay > 0) {
                 inst->pending_note = note;
                 inst->swing_pending = 1;
-                inst->swing_clock_ticks_left = delay;
+                inst->swing_subclocks_left = delay;
             } else {
                 count = flush_active_note(inst, out_msgs, out_lens, max_out, count);
                 count = emit_note_on(inst, note, out_msgs, out_lens, max_out, count);
@@ -301,16 +323,20 @@ static int process_clock_tick(Sting64Instance *inst,
         return 0;
 
     if (inst->note_off_pending && inst->active_note != 255) {
-        if (inst->note_off_clock_ticks > 0)
-            inst->note_off_clock_ticks--;
-        if (inst->note_off_clock_ticks == 0)
+        if (inst->note_off_subclocks > STING64_MIDI_CLOCK_SUBDIV)
+            inst->note_off_subclocks -= STING64_MIDI_CLOCK_SUBDIV;
+        else
+            inst->note_off_subclocks = 0;
+        if (inst->note_off_subclocks == 0)
             count = flush_active_note(inst, out_msgs, out_lens, max_out, count);
     }
 
     if (inst->swing_pending) {
-        if (inst->swing_clock_ticks_left > 0)
-            inst->swing_clock_ticks_left--;
-        if (inst->swing_clock_ticks_left == 0) {
+        if (inst->swing_subclocks_left > STING64_MIDI_CLOCK_SUBDIV)
+            inst->swing_subclocks_left -= STING64_MIDI_CLOCK_SUBDIV;
+        else
+            inst->swing_subclocks_left = 0;
+        if (inst->swing_subclocks_left == 0) {
             inst->swing_pending = 0;
             count = flush_active_note(inst, out_msgs, out_lens, max_out, count);
             count = emit_note_on(inst, inst->pending_note, out_msgs, out_lens,
@@ -318,9 +344,9 @@ static int process_clock_tick(Sting64Instance *inst,
         }
     }
 
-    inst->clock_counter++;
-    if (inst->clock_counter >= inst->clocks_per_step) {
-        inst->clock_counter = 0;
+    inst->clock_phase_subclocks += STING64_MIDI_CLOCK_SUBDIV;
+    while (inst->clock_phase_subclocks >= inst->step_subclocks) {
+        inst->clock_phase_subclocks -= inst->step_subclocks;
         count = run_step_boundary(inst, 1, out_msgs, out_lens, max_out, count);
     }
 
@@ -344,20 +370,20 @@ static void *create_instance(const char *module_dir, const char *config_json)
     inst->bpm              = 120;
     inst->rate             = STING64_RATE_SIXTEENTH;
     inst->gate             = 128;
-    inst->sync_mode        = STING64_SYNC_INTERNAL;
+    inst->sync_mode        = STING64_SYNC_MOVE; /* matches module.json default */
     inst->running          = 0;
     inst->last_clock_status = MOVE_CLOCK_STATUS_STOPPED;
     inst->last_sample_rate = 44100;
     inst->frames_per_step  = 5513;   /* 120 BPM @ 44100 Hz fallback */
     inst->frames_accum     = 0;
-    inst->clock_counter    = 0;
-    inst->clocks_per_step  = clocks_per_step_for_rate(inst->rate);
+    inst->clock_phase_subclocks = 0;
+    inst->step_subclocks  = step_subclocks_for_rate(inst->rate);
     inst->swing_pending    = 0;
     inst->swing_frames_left = 0;
-    inst->swing_clock_ticks_left = 0;
+    inst->swing_subclocks_left = 0;
     inst->note_off_pending  = 0;
     inst->note_off_frames   = 0;
-    inst->note_off_clock_ticks = 0;
+    inst->note_off_subclocks = 0;
     inst->active_note      = 255;    /* sentinel: no active note */
     inst->active_channel   = 0;
 
@@ -403,7 +429,7 @@ static int process_midi(void *instance,
         if (status == 0xFB) { /* Continue */
             inst->running = 1;
             inst->last_clock_status = MOVE_CLOCK_STATUS_RUNNING;
-            inst->clock_counter = 0;
+            inst->clock_phase_subclocks = 0;
             return 0;
         }
 
@@ -571,19 +597,6 @@ static int looks_normalized_float(const char *s, double v)
            strchr(s, 'E') != NULL;
 }
 
-static int parse_toggle(const char *s)
-{
-    double dv;
-
-    if (!s) return 0;
-    if (strcmp(s, "true") == 0 || strcmp(s, "on") == 0 || strcmp(s, "1") == 0)
-        return 1;
-    dv = atof(s);
-    if (dv > 0.5)
-        return 1;
-    return 0;
-}
-
 static int8_t parse_root(const char *s)
 {
     if (!s) return 0;
@@ -641,14 +654,6 @@ static uint32_t parse_seed(const char *s)
     return (uint32_t)v;
 }
 
-static uint32_t next_seed(uint32_t seed)
-{
-    seed = seed * 1664525u + 1013904223u;
-    if (seed == 0)
-        seed = 1;
-    return seed & 0xFFFFu;
-}
-
 static uint8_t parse_rate(const char *s)
 {
     double dv;
@@ -674,15 +679,23 @@ static uint8_t parse_rate(const char *s)
         return STING64_RATE_SIXTEENTH;
     if (strcmp(s, "1/16T") == 0 || strcmp(s, "sixteenth_triplet") == 0)
         return STING64_RATE_SIXTEENTH_T;
+    if (strcmp(s, "1/32D") == 0 || strcmp(s, "thirty-second_dotted") == 0)
+        return STING64_RATE_THIRTYSECOND_D;
     if (strcmp(s, "1/32") == 0 || strcmp(s, "thirty-second") == 0)
         return STING64_RATE_THIRTYSECOND;
     if (strcmp(s, "1/32T") == 0 || strcmp(s, "thirty-second_triplet") == 0)
         return STING64_RATE_THIRTYSECOND_T;
+    if (strcmp(s, "1/64D") == 0 || strcmp(s, "sixty-fourth_dotted") == 0)
+        return STING64_RATE_SIXTYFOURTH_D;
+    if (strcmp(s, "1/64") == 0 || strcmp(s, "sixty-fourth") == 0)
+        return STING64_RATE_SIXTYFOURTH;
+    if (strcmp(s, "1/64T") == 0 || strcmp(s, "sixty-fourth_triplet") == 0)
+        return STING64_RATE_SIXTYFOURTH_T;
 
     dv = atof(s);
     if (looks_normalized_float(s, dv)) {
-        int idx = (int)(dv * 11.0);
-        if (idx > 10) idx = 10;
+        int idx = (int)(dv * 15.0);
+        if (idx > 14) idx = 14;
         return (uint8_t)idx;
     }
 
@@ -692,7 +705,8 @@ static uint8_t parse_rate(const char *s)
     if (iv == 8) return STING64_RATE_EIGHTH;
     if (iv == 16) return STING64_RATE_SIXTEENTH;
     if (iv == 32) return STING64_RATE_THIRTYSECOND;
-    if (iv >= 0 && iv <= 10) return (uint8_t)iv;
+    if (iv == 64) return STING64_RATE_SIXTYFOURTH;
+    if (iv >= 0 && iv <= 14) return (uint8_t)iv;
     return STING64_RATE_SIXTEENTH;
 }
 
@@ -742,10 +756,18 @@ static const char *rate_name(uint8_t rate)
         return "1/16";
     case STING64_RATE_SIXTEENTH_T:
         return "1/16T";
+    case STING64_RATE_THIRTYSECOND_D:
+        return "1/32D";
     case STING64_RATE_THIRTYSECOND:
         return "1/32";
     case STING64_RATE_THIRTYSECOND_T:
         return "1/32T";
+    case STING64_RATE_SIXTYFOURTH_D:
+        return "1/64D";
+    case STING64_RATE_SIXTYFOURTH:
+        return "1/64";
+    case STING64_RATE_SIXTYFOURTH_T:
+        return "1/64T";
     default:
         return "1/16";
     }
@@ -870,14 +892,6 @@ static void set_param(void *instance, const char *key, const char *val)
         sting64_engine_invalidate_sequence(&inst->engine);
         return;
     }
-    if (strcmp(key, "regen") == 0) {
-        if (parse_toggle(val)) {
-            inst->engine.seed = next_seed(inst->engine.seed);
-            inst->engine.step_pos = 0;
-            sting64_engine_invalidate_sequence(&inst->engine);
-        }
-        return;
-    }
     if (strcmp(key, "rate") == 0) {
         inst->rate = parse_rate(val);
         recompute_timing(inst, inst->last_sample_rate, (float)inst->bpm);
@@ -952,8 +966,6 @@ static int get_param(void *instance, const char *key, char *buf, int buf_len)
         return snprintf(buf, buf_len, "%.4f", inst->gate / 255.0f);
     if (strcmp(key, "seed") == 0)
         return snprintf(buf, buf_len, "%u", (unsigned)inst->engine.seed);
-    if (strcmp(key, "regen") == 0)
-        return snprintf(buf, buf_len, "%s", "false");
     if (strcmp(key, "rate") == 0)
         return snprintf(buf, buf_len, "%s", rate_name(inst->rate));
     if (strcmp(key, "sync") == 0)

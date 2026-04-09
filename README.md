@@ -16,7 +16,6 @@ Sting64 is built for fast bassline and lead generation on Move:
 - vary phrase length from `1` to `64` steps
 - sync to Move transport and tempo or run from internal BPM
 - shape note feel with `rate`, `swing`, `gate`, `velocity`, and `chaos`
-- regenerate a new phrase instantly with `New Seed`
 
 The result sits somewhere between an acid sequencer, a melodic sketchpad, and a compact idea machine.
 
@@ -24,7 +23,6 @@ The result sits somewhere between an acid sequencer, a melodic sketchpad, and a 
 
 - Native Schwung MIDI FX module for Ableton Move
 - Deterministic melodic generation with `seed`
-- One-tap phrase regeneration with `New Seed`
 - Loop length from `1` to `64` steps
 - 19 scales, from diatonic modes to pentatonic, blues, diminished, whole-tone, and chromatic
 - Musical rest generation via `density`
@@ -45,8 +43,7 @@ The result sits somewhere between an acid sequencer, a melodic sketchpad, and a 
    - `Chaos`: `0.20` to `0.45`
    - `Rate`: `1/16`
    - `Gate`: `0.35` to `0.60`
-5. Press `New Seed` until the phrase feels right.
-6. Adjust `Root`, `Scale`, `Density`, and `Gate` to fit the track.
+5. Adjust `Seed`, `Root`, `Scale`, `Density`, and `Gate` to fit the track.
 
 ## Sync Note
 
@@ -62,7 +59,6 @@ If you want `sync = move`, enable **MIDI Clock Out / MIDI Sync Out** in the Move
 | `chaos` | Increases pitch spread and melodic unpredictability. |
 | `swing` | Delays off-beats for a looser groove. |
 | `seed` | Sets the deterministic identity of the current phrase. |
-| `regen` / `New Seed` | Generates a fresh seed and resets the phrase from step 1. |
 | `rate` | Sets rhythmic division: dotted, straight, or triplet values. |
 | `gate` | Sets note duration as a fraction of the step length. |
 | `bpm` | Internal tempo when `sync = internal`. |
