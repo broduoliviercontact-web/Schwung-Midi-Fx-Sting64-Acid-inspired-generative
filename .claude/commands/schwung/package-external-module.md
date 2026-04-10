@@ -106,12 +106,50 @@ To list a module in the official Schwung catalog (`module-catalog.json`), the en
     "name": "Your Module Name",
     "description": "One clear sentence describing what it does.",
     "component_type": "midi_fx",
-    "latest_version": "1.0.0",
+    "version": "1.0.0",
     "download_url": "https://github.com/<org>/<repo>/releases/download/v1.0.0/<module-id>-module.tar.gz"
 }
 ```
 
+> **Critical:** Use `"version"`, not `"latest_version"`. The Schwung installer reads `"version"` to detect whether an update is available. `"latest_version"` is silently ignored.
+
 The tarball must extract cleanly into a single folder named `<id>/` containing `module.json` and all required files. The module store uses `curl` to download and `tar -xzf` to extract.
+
+## macOS Packaging Pitfalls
+
+When packaging on macOS, these issues will silently break Linux installation:
+
+### 1. GNUSparseFile.0/ on Linux extraction
+`bsdtar` (macOS default) marks large binaries as GNUSparse. On Linux, `tar -xzf` creates `GNUSparseFile.0/dsp.so` instead of `dsp.so` — the DSP is never found.
+
+**Fix:** Use `dd` to copy dsp.so and `tar --no-xattrs` (or `gtar`):
+```bash
+export COPYFILE_DISABLE=1
+export COPY_EXTENDED_ATTRIBUTES_DISABLE=1
+dd if=build/aarch64/dsp.so of=dist/MODULE_ID/dsp.so bs=1 2>/dev/null
+tar --no-xattrs -C dist -czf archive.tar.gz MODULE_ID
+# or: gtar -C dist -czf archive.tar.gz MODULE_ID
+```
+**Diagnose:** `tar -tzf dist/MODULE-module.tar.gz | grep -i sparse`
+
+### 2. Wrong DSP entry point symbol
+`chain-v2` requires `move_midi_fx_init`. If the binary exports `move_plugin_init_v2`, DSP silently fails.
+
+**Diagnose:** `strings build/aarch64/dsp.so | grep 'move_midi_fx_init\|move_plugin_init'`
+
+### 3. Missing `raw_ui: true` in module.json
+Without this, the host shows "Chain-only module" when selected — it never loads `ui.js`. Only add this if the module has a `ui.js` file.
+
+### 4. UI file must be named `ui.js`
+The host always looks for `ui.js`. Naming it anything else causes silent failure. Copy it as `ui.js` in package.sh.
+
+### 5. GitHub CDN caches assets by filename
+If you delete and recreate a release with the same asset filename, GitHub serves the old cached file for ~60s. Use a versioned filename or upload with `--clobber` and wait.
+
+### 6. Move restart required after install
+The Schwung shim scans modules once at boot. A full Move restart is required after installing a new module.
+
+---
 
 ## Guardrails
 - Do not package build junk.

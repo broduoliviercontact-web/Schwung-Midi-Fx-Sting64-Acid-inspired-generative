@@ -67,7 +67,15 @@ jobs:
           import os
           from pathlib import Path
 
+          # Read full module metadata for catalog-required fields
+          with open("src/module.json", "r", encoding="utf-8") as f:
+              mod = json.load(f)
+
           data = {
+              "id": os.environ["MODULE_ID"],
+              "name": mod.get("name", os.environ["MODULE_ID"]),
+              "description": mod.get("description", ""),
+              "component_type": mod.get("capabilities", {}).get("component_type", "midi_fx"),
               "version": os.environ["VERSION"],
               "download_url": (
                   f"https://github.com/{os.environ['GITHUB_REPOSITORY']}"

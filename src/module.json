@@ -5,25 +5,13 @@
   "version": "0.1.1",
   "description": "Probabilistic step sequencer with musical thinning, swing, pitch chaos, and scale locking.",
   "author": "Schwung",
-  "license": "MIT",
-  "dsp": "dsp.so",
   "api_version": 2,
+  "dsp": "dsp.so",
   "capabilities": {
-    "audio_out": false,
-    "audio_in": false,
     "midi_in": true,
     "midi_out": true,
     "chainable": true,
     "component_type": "midi_fx"
-  },
-  "ui_hierarchy": {
-    "levels": {
-      "root": {
-        "name": "Sting64",
-        "knobs": ["root", "scale", "density", "chaos", "swing", "rate", "gate", "steps"],
-        "params": ["root", "scale", "density", "chaos", "swing", "seed", "rate", "gate", "bpm", "sync", "steps", "velocity"]
-      }
-    }
   },
   "chain_params": [
     {

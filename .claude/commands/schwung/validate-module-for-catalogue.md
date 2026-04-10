@@ -144,10 +144,12 @@ If the module is being submitted to the Schwung module catalog, verify the catal
     "name": "<display name>",
     "description": "<one clear sentence>",
     "component_type": "<valid type>",
-    "latest_version": "<semver>",
+    "version": "<semver>",
     "download_url": "<direct tarball URL>"
 }
 ```
+
+> **Critical:** The Schwung installer reads `"version"`, not `"latest_version"`. Using `"latest_version"` causes silent install failure — the module downloads but is never recognized.
 
 The tarball must:
 - be a `.tar.gz`

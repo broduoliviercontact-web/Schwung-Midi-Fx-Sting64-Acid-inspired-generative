@@ -1,4 +1,8 @@
 {
-  "version": "0.1.0",
-  "download_url": "https://github.com/broduoliviercontact-web/Sting64-Midi-Fx-Acid-inspired-generative/releases/download/v0.1.0/sting64-module.tar.gz"
+  "id": "sting64",
+  "name": "Sting64",
+  "description": "Probabilistic step sequencer with musical thinning, swing, pitch chaos, and scale locking.",
+  "component_type": "midi_fx",
+  "version": "0.1.1",
+  "download_url": "https://github.com/broduoliviercontact-web/Schwung-Midi-Fx-Sting64-Acid-inspired-generative/releases/download/v0.1.1/sting64-module.tar.gz"
 }
