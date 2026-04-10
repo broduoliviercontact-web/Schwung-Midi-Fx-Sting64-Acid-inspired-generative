@@ -7,6 +7,15 @@
   "author": "Schwung",
   "api_version": 2,
   "dsp": "dsp.so",
+  "ui_hierarchy": {
+    "levels": {
+      "root": {
+        "name": "Sting64",
+        "knobs": ["root", "scale", "density", "chaos", "swing", "rate", "gate", "steps"],
+        "params": ["root", "scale", "density", "chaos", "swing", "seed", "rate", "gate", "bpm", "sync", "steps", "velocity"]
+      }
+    }
+  },
   "capabilities": {
     "midi_in": true,
     "midi_out": true,
