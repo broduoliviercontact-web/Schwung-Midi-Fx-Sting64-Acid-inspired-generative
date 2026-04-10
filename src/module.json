@@ -2,7 +2,7 @@
   "id": "sting64",
   "name": "Sting64",
   "abbrev": "S64",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Probabilistic step sequencer with musical thinning, swing, pitch chaos, and scale locking.",
   "author": "Schwung",
   "api_version": 2,
